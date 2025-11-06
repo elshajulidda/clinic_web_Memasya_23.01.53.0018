@@ -1,3 +1,4 @@
+
 // ==================== KONFIGURASI & DEKLARASI ====================
 const API_BASE = 'http://localhost/clinic_web/api/';
 let currentEditingId = null;
@@ -92,15 +93,7 @@ function getStatusText(status) {
     return statusMap[status] || status || 'Unknown';
 }
 
-function getInvoiceStatusText(status) {
-    const statusMap = {
-        'unpaid': 'Belum Bayar',
-        'paid': 'Lunas',
-        'partial': 'Sebagian',
-        'cancelled': 'Dibatalkan'
-    };
-    return statusMap[status] || status || 'Unknown';
-}
+
 
 function safeUpdateElement(elementId, text) {
     const element = document.getElementById(elementId);
@@ -139,7 +132,6 @@ async function apiCall(endpoint, options = {}) {
             signal: controller.signal
         };
 
-        // Jika ada body, tambahkan ke config (kecuali untuk GET)
         if (options.body && config.method !== 'GET') {
             config.body = options.body;
         }
@@ -160,8 +152,19 @@ async function apiCall(endpoint, options = {}) {
             let errorMessage = `HTTP error! status: ${response.status}`;
             try {
                 const errorText = await response.text();
-                if (errorText) {
-                    errorMessage += ` - ${errorText}`;
+                console.error(`❌ Error response:`, errorText);
+                
+                // Coba parse sebagai JSON
+                try {
+                    const errorData = JSON.parse(errorText);
+                    errorMessage = errorData.message || errorMessage;
+                } catch {
+                    // Jika bukan JSON, gunakan teks langsung
+                    if (errorText.includes('Fatal error') || errorText.includes('Exception')) {
+                        errorMessage = 'Server error: Please check server logs';
+                    } else {
+                        errorMessage = errorText.substring(0, 200);
+                    }
                 }
             } catch (e) {
                 // Ignore text parsing error
@@ -173,7 +176,7 @@ async function apiCall(endpoint, options = {}) {
         console.log(`📨 Raw response from ${endpoint}:`, text.substring(0, 500));
         
         if (!text) {
-            throw new Error('Empty response from server');
+            return null;
         }
         
         let data;
@@ -182,7 +185,12 @@ async function apiCall(endpoint, options = {}) {
         } catch (e) {
             console.error('❌ JSON parse error:', e);
             console.error('❌ Problematic response:', text);
-            throw new Error(`Invalid JSON response: ${text.substring(0, 100)}`);
+            
+            if (text.includes('Fatal error') || text.includes('Exception') || text.includes('Warning')) {
+                throw new Error('Server configuration error. Please check PHP error logs.');
+            } else {
+                throw new Error(`Invalid response format: ${text.substring(0, 100)}`);
+            }
         }
         
         return data;
@@ -198,6 +206,44 @@ async function apiCall(endpoint, options = {}) {
         throw error;
     }
 }
+
+// ==================== DEBUG FUNCTIONS ====================
+function debugAPI(endpoint) {
+    console.log(`🔍 Debugging ${endpoint}...`);
+    fetch(API_BASE + endpoint)
+        .then(response => {
+            console.log(`📄 Response status: ${response.status}`);
+            return response.text();
+        })
+        .then(text => {
+            console.log(`📨 Raw response:`, text.substring(0, 500));
+            try {
+                const data = JSON.parse(text);
+                console.log(`✅ Parsed data:`, data);
+            } catch (e) {
+                console.error(`❌ JSON parse error:`, e);
+            }
+        })
+        .catch(error => {
+            console.error(`❌ Fetch error:`, error);
+        });
+}
+
+// Fungsi untuk test semua endpoints
+window.debugAllEndpoints = function() {
+    const endpoints = [
+        'test_api.php',
+        'patients.php',
+        'doctors.php',
+        'appointments.php',
+        'medicines.php',
+        'rooms.php'
+    ];
+    
+    endpoints.forEach(endpoint => {
+        setTimeout(() => debugAPI(endpoint), 100);
+    });
+};
 
 // ==================== DASHBOARD FUNCTIONS ====================
 async function loadDashboard() {
@@ -555,10 +601,6 @@ function showSection(sectionId) {
         case 'medicines':
             loadMedicines();
             break;
-        case 'invoices':
-            loadInvoices();
-            loadInvoiceFormOptions();
-            break;
     }
 }
 
@@ -576,24 +618,10 @@ async function loadFormOptions() {
         updateSelectOptions('room_id', rooms, 'name', 'clinic_name');
     } catch (error) {
         console.error('Error loading form options:', error);
+        showAlert('Error memuat opsi form: ' + error.message, 'error');
     }
 }
 
-async function loadInvoiceFormOptions() {
-    try {
-        const appointments = await apiCall('appointments.php');
-        const select = document.getElementById('invoice_appointment_id');
-        
-        if (select) {
-            select.innerHTML = '<option value="">Pilih Janji Temu</option>' + 
-                appointments.filter(apt => apt.status === 'completed').map(apt => 
-                    `<option value="${apt.id}">${apt.patient_name} - ${formatDateTime(apt.scheduled_at)}</option>`
-                ).join('');
-        }
-    } catch (error) {
-        console.error('Error loading invoice options:', error);
-    }
-}
 
 // ==================== EDIT FUNCTIONS ====================
 function editPatient(id) {
@@ -612,9 +640,6 @@ function editMedicine(id) {
     showMedicineForm(id);
 }
 
-function editInvoice(id) {
-    showInvoiceForm(id);
-}
 
 // ==================== PATIENTS CRUD ====================
 async function loadPatients() {
@@ -737,7 +762,7 @@ if (patientForm) {
                 loadPatients();
                 loadDashboard();
             } else {
-                showAlert('Error: ' + result.message, 'error');
+                showAlert('Error: ' + (result.message || 'Unknown error'), 'error');
             }
         } catch (error) {
             showAlert('Error menyimpan data: ' + error.message, 'error');
@@ -759,7 +784,7 @@ async function deletePatient(id) {
                 loadPatients();
                 loadDashboard();
             } else {
-                showAlert('Error: ' + result.message, 'error');
+                showAlert('Error: ' + (result.message || 'Unknown error'), 'error');
             }
         } catch (error) {
             showAlert('Error menghapus pasien: ' + error.message, 'error');
@@ -867,18 +892,37 @@ if (doctorForm) {
     doctorForm.addEventListener('submit', async function(e) {
         e.preventDefault();
         
+        console.log('👨‍⚕️ Doctor form submitted');
+        
         const formData = new FormData(this);
         const data = Object.fromEntries(formData);
+        
+        // Debug form data
+        console.log('📦 Doctor form data:', data);
+        
+        // Convert empty strings to null for optional fields
+        if (data.experience_years === '') data.experience_years = null;
+        if (data.license_number === '') data.license_number = '';
+        if (data.education === '') data.education = '';
+        if (data.schedule === '') data.schedule = '';
         
         try {
             const url = currentEditingId ? `doctors.php?id=${currentEditingId}` : 'doctors.php';
             const method = currentEditingId ? 'PUT' : 'POST';
             
+            console.log(`🚀 Sending ${method} request to ${url}`);
+            console.log('📤 Data being sent:', data);
+            
             const result = await apiCall(url, {
                 method: method,
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
                 body: JSON.stringify(data)
             });
+            
+            console.log('✅ Server response:', result);
             
             if (result.success) {
                 showAlert(`Dokter berhasil ${currentEditingId ? 'diupdate' : 'ditambahkan'}`, 'success');
@@ -886,9 +930,10 @@ if (doctorForm) {
                 loadDoctors();
                 loadDashboard();
             } else {
-                showAlert('Error: ' + result.message, 'error');
+                showAlert('Error: ' + (result.message || 'Unknown error'), 'error');
             }
         } catch (error) {
+            console.error('❌ Error saving doctor:', error);
             showAlert('Error menyimpan data: ' + error.message, 'error');
         }
     });
@@ -908,7 +953,7 @@ async function deleteDoctor(id) {
                 loadDoctors();
                 loadDashboard();
             } else {
-                showAlert('Error: ' + result.message, 'error');
+                showAlert('Error: ' + (result.message || 'Unknown error'), 'error');
             }
         } catch (error) {
             showAlert('Error menghapus dokter: ' + error.message, 'error');
@@ -954,10 +999,7 @@ async function loadAppointments() {
                                             `<button class="btn-success btn-sm" onclick="updateAppointmentStatus(${apt.id}, 'completed')">Selesai</button>` : 
                                             ''
                                         }
-                                        ${apt.status === 'completed' ? 
-                                            `<button class="btn-info btn-sm" onclick="createInvoiceFromAppointment(${apt.id})">Buat Invoice</button>` : 
-                                            ''
-                                        }
+                                       
                                     </div>
                                 </td>
                             </tr>
@@ -1040,7 +1082,6 @@ if (appointmentForm) {
         
         // Format scheduled_at untuk database
         if (data.scheduled_at) {
-            // Convert from datetime-local format to MySQL datetime format
             data.scheduled_at = data.scheduled_at.replace('T', ' ') + ':00';
         }
         
@@ -1074,7 +1115,7 @@ if (appointmentForm) {
                 loadAppointments();
                 loadDashboard();
             } else {
-                showAlert('Error dari server: ' + result.message, 'error');
+                showAlert('Error dari server: ' + (result.message || 'Unknown error'), 'error');
             }
         } catch (error) {
             console.error('❌ Error saving appointment:', error);
@@ -1097,7 +1138,7 @@ async function deleteAppointment(id) {
                 loadAppointments();
                 loadDashboard();
             } else {
-                showAlert('Error: ' + result.message, 'error');
+                showAlert('Error: ' + (result.message || 'Unknown error'), 'error');
             }
         } catch (error) {
             console.error('❌ Error deleting appointment:', error);
@@ -1113,7 +1154,7 @@ async function updateAppointmentStatus(id, status) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
                 status: status,
-                id: id // Tambahkan ID di body juga untuk backup
+                id: id
             })
         });
         
@@ -1122,7 +1163,7 @@ async function updateAppointmentStatus(id, status) {
             loadAppointments();
             loadDashboard();
         } else {
-            showAlert('Error: ' + result.message, 'error');
+            showAlert('Error: ' + (result.message || 'Unknown error'), 'error');
         }
     } catch (error) {
         console.error('❌ Error updating appointment status:', error);
@@ -1130,32 +1171,7 @@ async function updateAppointmentStatus(id, status) {
     }
 }
 
-async function createInvoiceFromAppointment(appointmentId) {
-    try {
-        const appointments = await apiCall('appointments.php');
-        const appointment = appointments.find(a => a.id == appointmentId);
-        
-        if (appointment) {
-            const invoiceAppointmentId = document.getElementById('invoice_appointment_id');
-            const invoiceTotalAmount = document.getElementById('invoice_total_amount');
-            
-            if (invoiceAppointmentId) invoiceAppointmentId.value = appointmentId;
-            if (invoiceTotalAmount) {
-                const defaultAmounts = {
-                    'consultation': 150000,
-                    'treatment': 300000,
-                    'surgery': 1000000,
-                    'checkup': 200000
-                };
-                const defaultAmount = defaultAmounts[appointment.type] || 150000;
-                invoiceTotalAmount.value = defaultAmount;
-            }
-            showInvoiceForm();
-        }
-    } catch (error) {
-        showAlert('Error memuat data janji temu: ' + error.message, 'error');
-    }
-}
+
 
 // ==================== MEDICINES CRUD ====================
 async function loadMedicines() {
@@ -1264,18 +1280,30 @@ if (medicineForm) {
     medicineForm.addEventListener('submit', async function(e) {
         e.preventDefault();
         
+        console.log('💊 Medicine form submitted');
+        
         const formData = new FormData(this);
         const data = Object.fromEntries(formData);
+        
+        // Debug form data
+        console.log('📦 Medicine form data:', data);
         
         try {
             const url = currentEditingId ? `medicines.php?id=${currentEditingId}` : 'medicines.php';
             const method = currentEditingId ? 'PUT' : 'POST';
             
+            console.log(`🚀 Sending ${method} request to ${url}`);
+            
             const result = await apiCall(url, {
                 method: method,
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
                 body: JSON.stringify(data)
             });
+            
+            console.log('✅ Server response:', result);
             
             if (result.success) {
                 showAlert(`Obat berhasil ${currentEditingId ? 'diupdate' : 'ditambahkan'}`, 'success');
@@ -1283,9 +1311,10 @@ if (medicineForm) {
                 loadMedicines();
                 loadDashboard();
             } else {
-                showAlert('Error: ' + result.message, 'error');
+                showAlert('Error: ' + (result.message || 'Unknown error'), 'error');
             }
         } catch (error) {
+            console.error('❌ Error saving medicine:', error);
             showAlert('Error menyimpan data: ' + error.message, 'error');
         }
     });
@@ -1305,7 +1334,7 @@ async function deleteMedicine(id) {
                 loadMedicines();
                 loadDashboard();
             } else {
-                showAlert('Error: ' + result.message, 'error');
+                showAlert('Error: ' + (result.message || 'Unknown error'), 'error');
             }
         } catch (error) {
             showAlert('Error menghapus obat: ' + error.message, 'error');
@@ -1313,255 +1342,8 @@ async function deleteMedicine(id) {
     }
 }
 
-// ==================== INVOICES CRUD ====================
-async function loadInvoices() {
-    try {
-        showLoading('invoices-list');
-        const invoices = await apiCall('invoices.php');
-        
-        const table = document.getElementById('invoices-list');
-        if (table) {
-            table.innerHTML = `
-                <table>
-                    <thead>
-                        <tr>
-                            <th>No. Invoice</th>
-                            <th>Pasien</th>
-                            <th>Dokter</th>
-                            <th>Total</th>
-                            <th>Dibayar</th>
-                            <th>Sisa</th>
-                            <th>Status</th>
-                            <th>Aksi</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${invoices.map(invoice => {
-                            const remaining = invoice.total_amount - invoice.paid_amount;
-                            return `
-                            <tr>
-                                <td>${invoice.invoice_number || 'N/A'}</td>
-                                <td>${invoice.patient_name || 'N/A'}</td>
-                                <td>${invoice.doctor_name || 'N/A'}</td>
-                                <td>${formatCurrency(invoice.total_amount)}</td>
-                                <td>${formatCurrency(invoice.paid_amount)}</td>
-                                <td>${formatCurrency(remaining)}</td>
-                                <td><span class="status-badge status-${invoice.status}">${getInvoiceStatusText(invoice.status)}</span></td>
-                                <td>
-                                    <div class="action-buttons">
-                                        <button class="btn-success btn-sm" onclick="showPaymentModal(${invoice.id})">Bayar</button>
-                                        <button class="btn-edit btn-sm" onclick="editInvoice(${invoice.id})">Edit</button>
-                                        ${invoice.status === 'unpaid' || invoice.status === 'partial' ? 
-                                            `<button class="btn-danger btn-sm" onclick="deleteInvoice(${invoice.id})">Hapus</button>` : 
-                                            ''
-                                        }
-                                    </div>
-                                </td>
-                            </tr>
-                        `}).join('')}
-                    </tbody>
-                </table>
-            `;
-        }
-    } catch (error) {
-        showError('invoices-list', 'Error memuat data invoice: ' + error.message);
-    }
-}
 
-function showInvoiceForm(invoiceId = null) {
-    const form = document.getElementById('invoice-form');
-    const title = document.getElementById('invoice-form-title');
-    
-    if (form && title) {
-        if (invoiceId) {
-            title.textContent = 'Edit Invoice';
-            currentEditingId = invoiceId;
-            loadInvoiceData(invoiceId);
-        } else {
-            title.textContent = 'Buat Invoice Baru';
-            const invoiceForm = document.getElementById('invoiceForm');
-            if (invoiceForm) invoiceForm.reset();
-            currentEditingId = null;
-        }
-        
-        form.style.display = 'block';
-    }
-}
 
-function hideInvoiceForm() {
-    const form = document.getElementById('invoice-form');
-    if (form) form.style.display = 'none';
-}
-
-async function loadInvoiceData(id) {
-    try {
-        const invoices = await apiCall('invoices.php');
-        const invoice = invoices.find(i => i.id == id);
-        
-        if (invoice) {
-            const fields = [
-                'invoice_id', 'invoice_appointment_id', 'invoice_total_amount', 'payment_method'
-            ];
-            
-            fields.forEach(field => {
-                const element = document.getElementById(field);
-                if (element) {
-                    element.value = invoice[field.replace('invoice_', '')] || '';
-                }
-            });
-        }
-    } catch (error) {
-        showAlert('Error memuat data invoice: ' + error.message, 'error');
-    }
-}
-
-// Event listener untuk invoice form
-const invoiceForm = document.getElementById('invoiceForm');
-if (invoiceForm) {
-    invoiceForm.addEventListener('submit', async function(e) {
-        e.preventDefault();
-        
-        const formData = new FormData(this);
-        const data = Object.fromEntries(formData);
-        
-        try {
-            let result;
-            if (currentEditingId) {
-                result = await apiCall(`invoices.php?id=${currentEditingId}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(data)
-                });
-            } else {
-                result = await apiCall('invoices.php', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(data)
-                });
-            }
-            
-            if (result.success) {
-                showAlert(`Invoice berhasil ${currentEditingId ? 'diupdate' : 'dibuat'}: ${result.invoice_number || ''}`, 'success');
-                hideInvoiceForm();
-                loadInvoices();
-                loadDashboard();
-            } else {
-                showAlert('Error: ' + result.message, 'error');
-            }
-        } catch (error) {
-            showAlert('Error menyimpan invoice: ' + error.message, 'error');
-        }
-    });
-}
-
-function showPaymentModal(invoiceId) {
-    currentEditingId = invoiceId;
-    const modal = document.getElementById('paymentModal');
-    if (modal) {
-        modal.style.display = 'block';
-        loadInvoicePaymentData(invoiceId);
-    }
-}
-
-function closePaymentModal() {
-    const modal = document.getElementById('paymentModal');
-    if (modal) modal.style.display = 'none';
-}
-
-async function loadInvoicePaymentData(id) {
-    try {
-        const invoices = await apiCall('invoices.php');
-        const invoice = invoices.find(i => i.id == id);
-        
-        if (invoice) {
-            const fields = [
-                'payment_invoice_id', 'payment_invoice_number', 
-                'payment_total', 'payment_paid', 'payment_payment_method'
-            ];
-            
-            fields.forEach(field => {
-                const element = document.getElementById(field);
-                if (element) {
-                    if (field === 'payment_total' || field === 'payment_paid') {
-                        element.value = formatCurrency(invoice[field.replace('payment_', '')]);
-                    } else {
-                        element.value = invoice[field.replace('payment_', '')] || '';
-                    }
-                }
-            });
-            
-            const paymentAmount = document.getElementById('payment_amount');
-            if (paymentAmount) {
-                const remaining = invoice.total_amount - invoice.paid_amount;
-                paymentAmount.value = remaining > 0 ? remaining.toFixed(2) : '0';
-                paymentAmount.max = remaining;
-            }
-        }
-    } catch (error) {
-        showAlert('Error memuat data invoice: ' + error.message, 'error');
-    }
-}
-
-// Event listener untuk payment form
-const paymentForm = document.getElementById('paymentForm');
-if (paymentForm) {
-    paymentForm.addEventListener('submit', async function(e) {
-        e.preventDefault();
-        
-        const amount = parseFloat(document.getElementById('payment_amount').value);
-        const invoiceId = document.getElementById('payment_invoice_id').value;
-        const paymentMethod = document.getElementById('payment_payment_method').value;
-        
-        if (amount <= 0) {
-            showAlert('Jumlah pembayaran harus lebih dari 0', 'error');
-            return;
-        }
-        
-        try {
-            const result = await apiCall(`invoices.php?id=${invoiceId}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    paid_amount: amount,
-                    payment_method: paymentMethod
-                })
-            });
-            
-            if (result.success) {
-                showAlert('Pembayaran berhasil diproses', 'success');
-                closePaymentModal();
-                loadInvoices();
-                loadDashboard();
-            } else {
-                showAlert('Error: ' + result.message, 'error');
-            }
-        } catch (error) {
-            showAlert('Error memproses pembayaran: ' + error.message, 'error');
-        }
-    });
-}
-
-async function deleteInvoice(id) {
-    if (confirm('Apakah Anda yakin ingin menghapus invoice ini?')) {
-        try {
-            const result = await apiCall(`invoices.php?id=${id}`, { 
-                method: 'DELETE',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: id })
-            });
-            
-            if (result.success) {
-                showAlert('Invoice berhasil dihapus', 'success');
-                loadInvoices();
-                loadDashboard();
-            } else {
-                showAlert('Error: ' + result.message, 'error');
-            }
-        } catch (error) {
-            showAlert('Error menghapus invoice: ' + error.message, 'error');
-        }
-    }
-}
 
 // ==================== DEBUG & TESTING FUNCTIONS ====================
 // Fungsi untuk test API endpoints
@@ -1574,7 +1356,6 @@ window.testAPI = async function() {
         'doctors.php', 
         'appointments.php',
         'medicines.php',
-        'invoices.php',
         'rooms.php',
         'dummy_data.php'
     ];
@@ -1692,6 +1473,33 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('✅ DOM fully loaded and parsed');
     console.log('🚀 Sistem Manajemen Klinik initialized');
     
+    // Initialize event listeners untuk form close buttons
+    const closeButtons = document.querySelectorAll('.close-form');
+    closeButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            const form = this.closest('.form-container');
+            if (form) {
+                form.style.display = 'none';
+            }
+        });
+    });
+    
+    // Initialize modal close functionality
+    const modal = document.getElementById('paymentModal');
+    if (modal) {
+        const closeModal = document.querySelector('.close-modal');
+        if (closeModal) {
+            closeModal.addEventListener('click', closePaymentModal);
+        }
+        
+        // Close modal when clicking outside
+        window.addEventListener('click', function(event) {
+            if (event.target === modal) {
+                closePaymentModal();
+            }
+        });
+    }
+    
     // Load dashboard
     loadDashboard();
     
@@ -1701,3 +1509,9 @@ document.addEventListener('DOMContentLoaded', function() {
         testAPI();
     }, 1000);
 });
+
+// Global functions untuk onclick events
+window.showPatientForm = showPatientForm;
+window.showDoctorForm = showDoctorForm;
+window.showAppointmentForm = showAppointmentForm;
+window.showMedicineForm = showMedicineForm;

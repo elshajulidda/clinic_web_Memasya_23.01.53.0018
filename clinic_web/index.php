@@ -19,7 +19,6 @@ session_start();
                 <a href="#" onclick="showSection('patients')">👥 Pasien</a>
                 <a href="#" onclick="showSection('doctors')">👨‍⚕️ Dokter</a>
                 <a href="#" onclick="showSection('medicines')">💊 Obat</a>
-                <a href="#" onclick="showSection('invoices')">🧾 Invoice</a>
             </nav>
         </header>
 
@@ -360,87 +359,7 @@ session_start();
                 <div id="medicines-list" class="table-container"></div>
             </section>
 
-            <!-- Invoices Section -->
-            <section id="invoices" class="section">
-                <div class="section-header">
-                    <h2>Manajemen Invoice</h2>
-                    <button class="btn-primary" onclick="showInvoiceForm()">+ Buat Invoice</button>
-                </div>
-                
-                <!-- Invoice Form -->
-                <div id="invoice-form" class="form-container" style="display: none;">
-                    <h3 id="invoice-form-title">Buat Invoice Baru</h3>
-                    <form id="invoiceForm">
-                        <input type="hidden" id="invoice_id" name="id">
-                        <div class="form-group">
-                            <label for="invoice_appointment_id">Pilih Janji Temu:</label>
-                            <select id="invoice_appointment_id" name="appointment_id" required>
-                                <option value="">Pilih Janji Temu</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="invoice_total_amount">Total Amount:</label>
-                            <input type="number" id="invoice_total_amount" name="total_amount" step="0.01" required>
-                        </div>
-                        <div class="form-group">
-                            <label for="payment_method">Metode Pembayaran:</label>
-                            <select id="payment_method" name="payment_method">
-                                <option value="cash">Cash</option>
-                                <option value="debit_card">Kartu Debit</option>
-                                <option value="credit_card">Kartu Kredit</option>
-                                <option value="transfer">Transfer</option>
-                                <option value="qris">QRIS</option>
-                            </select>
-                        </div>
-                        <div class="form-actions">
-                            <button type="submit" class="btn-primary">Buat Invoice</button>
-                            <button type="button" class="btn-secondary" onclick="hideInvoiceForm()">Batal</button>
-                        </div>
-                    </form>
-                </div>
-
-                <!-- Payment Modal -->
-                <div id="paymentModal" class="modal" style="display: none;">
-                    <div class="modal-content">
-                        <h3>Pembayaran Invoice</h3>
-                        <form id="paymentForm">
-                            <input type="hidden" id="payment_invoice_id">
-                            <div class="form-group">
-                                <label>No. Invoice:</label>
-                                <input type="text" id="payment_invoice_number" readonly>
-                            </div>
-                            <div class="form-group">
-                                <label>Total Amount:</label>
-                                <input type="text" id="payment_total" readonly>
-                            </div>
-                            <div class="form-group">
-                                <label>Already Paid:</label>
-                                <input type="text" id="payment_paid" readonly>
-                            </div>
-                            <div class="form-group">
-                                <label>Amount to Pay:</label>
-                                <input type="number" id="payment_amount" step="0.01" required>
-                            </div>
-                            <div class="form-group">
-                                <label>Metode Pembayaran:</label>
-                                <select id="payment_payment_method">
-                                    <option value="cash">Cash</option>
-                                    <option value="debit_card">Kartu Debit</option>
-                                    <option value="credit_card">Kartu Kredit</option>
-                                    <option value="transfer">Transfer</option>
-                                    <option value="qris">QRIS</option>
-                                </select>
-                            </div>
-                            <div class="form-actions">
-                                <button type="submit" class="btn-primary">Proses Pembayaran</button>
-                                <button type="button" class="btn-secondary" onclick="closePaymentModal()">Batal</button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-
-                <div id="invoices-list" class="table-container"></div>
-            </section>
+           
         </main>
     </div>
 

@@ -1,33 +1,28 @@
 <?php
-include_once '../config/database.php';
+include_once __DIR__ . '/../config/database.php';
 handleCors();
 
-$database = new Database();
-$db = $database->getConnection();
-
-if (!$db) {
-    sendJsonResponse([
-        "success" => false,
-        "message" => "Database connection failed"
-    ], 500);
-}
-
-$method = $_SERVER['REQUEST_METHOD'];
-
 try {
+    $database = new Database();
+    $db = $database->getConnection();
+
+    if (!$db) {
+        throw new Exception("Database connection failed");
+    }
+
+    $method = $_SERVER['REQUEST_METHOD'];
+    $input = getRequestData();
+
+    error_log("Patients API - Method: $method, Data: " . json_encode($input));
+
     switch($method) {
         case 'GET':
-            error_log("Patients API called"); // Debug log
-            
             $query = "SELECT * FROM patients ORDER BY created_at DESC";
             $stmt = $db->prepare($query);
             
             if (!$stmt->execute()) {
-                error_log("Query failed: " . implode(", ", $stmt->errorInfo()));
-                sendJsonResponse([
-                    "success" => false,
-                    "message" => "Query execution failed"
-                ], 500);
+                $errorInfo = $stmt->errorInfo();
+                throw new Exception("Query execution failed: " . $errorInfo[2]);
             }
             
             $patients = [];
@@ -48,30 +43,27 @@ try {
                 ];
             }
             
-            error_log("Found " . count($patients) . " patients"); // Debug log
             sendJsonResponse($patients);
             break;
             
         case 'POST':
-            $data = getRequestData();
-            
-            // Validate required fields
-            if (empty($data['full_name'])) {
+            // Validasi input
+            if (empty($input['full_name'])) {
                 sendJsonResponse([
                     "success" => false,
-                    "message" => "Full name is required"
+                    "message" => "Nama lengkap harus diisi"
                 ], 400);
             }
-            
-            // Generate medical record number if not provided
-            if (empty($data['medical_record_number'])) {
+
+            // Generate medical record number jika tidak ada
+            if (empty($input['medical_record_number'])) {
                 $countQuery = "SELECT COUNT(*) as count FROM patients";
                 $countStmt = $db->prepare($countQuery);
                 $countStmt->execute();
                 $count = $countStmt->fetch(PDO::FETCH_ASSOC)['count'] + 1;
-                $data['medical_record_number'] = 'RM' . str_pad($count, 4, '0', STR_PAD_LEFT);
+                $input['medical_record_number'] = 'RM' . str_pad($count, 4, '0', STR_PAD_LEFT);
             }
-            
+
             $query = "INSERT INTO patients 
                      (medical_record_number, full_name, gender, birth_date, phone, email, address, blood_type, allergies, emergency_contact) 
                      VALUES 
@@ -79,42 +71,51 @@ try {
             
             $stmt = $db->prepare($query);
             
-            $stmt->bindParam(':medical_record_number', $data['medical_record_number']);
-            $stmt->bindParam(':full_name', $data['full_name']);
-            $stmt->bindParam(':gender', $data['gender'] ?? 'M');
-            $stmt->bindParam(':birth_date', $data['birth_date'] ?? null);
-            $stmt->bindParam(':phone', $data['phone'] ?? '');
-            $stmt->bindParam(':email', $data['email'] ?? '');
-            $stmt->bindParam(':address', $data['address'] ?? '');
-            $stmt->bindParam(':blood_type', $data['blood_type'] ?? null);
-            $stmt->bindParam(':allergies', $data['allergies'] ?? '');
-            $stmt->bindParam(':emergency_contact', $data['emergency_contact'] ?? '');
+            // Bind parameters dengan nilai default yang aman
+            $medical_record_number = $input['medical_record_number'] ?? '';
+            $full_name = $input['full_name'] ?? '';
+            $gender = $input['gender'] ?? 'M';
+            $birth_date = !empty($input['birth_date']) ? $input['birth_date'] : null;
+            $phone = $input['phone'] ?? '';
+            $email = $input['email'] ?? '';
+            $address = $input['address'] ?? '';
+            $blood_type = $input['blood_type'] ?? '';
+            $allergies = $input['allergies'] ?? '';
+            $emergency_contact = $input['emergency_contact'] ?? '';
+            
+            $stmt->bindParam(':medical_record_number', $medical_record_number);
+            $stmt->bindParam(':full_name', $full_name);
+            $stmt->bindParam(':gender', $gender);
+            $stmt->bindParam(':birth_date', $birth_date);
+            $stmt->bindParam(':phone', $phone);
+            $stmt->bindParam(':email', $email);
+            $stmt->bindParam(':address', $address);
+            $stmt->bindParam(':blood_type', $blood_type);
+            $stmt->bindParam(':allergies', $allergies);
+            $stmt->bindParam(':emergency_contact', $emergency_contact);
             
             if ($stmt->execute()) {
+                $lastId = $db->lastInsertId();
                 sendJsonResponse([
                     "success" => true,
-                    "message" => "Patient created successfully",
-                    "patient_id" => $db->lastInsertId(),
-                    "medical_record_number" => $data['medical_record_number']
+                    "message" => "Pasien berhasil ditambahkan",
+                    "patient_id" => $lastId,
+                    "medical_record_number" => $medical_record_number
                 ], 201);
             } else {
-                sendJsonResponse([
-                    "success" => false,
-                    "message" => "Failed to create patient"
-                ], 500);
+                $errorInfo = $stmt->errorInfo();
+                throw new Exception("Gagal menambahkan pasien: " . $errorInfo[2]);
             }
             break;
             
         case 'PUT':
-            $id = $_GET['id'] ?? null;
+            $id = $_GET['id'] ?? $input['id'] ?? null;
             if (!$id) {
                 sendJsonResponse([
                     "success" => false,
-                    "message" => "Patient ID is required"
+                    "message" => "ID pasien diperlukan"
                 ], 400);
             }
-            
-            $data = getRequestData();
             
             // Check if patient exists
             $checkQuery = "SELECT id FROM patients WHERE id = :id";
@@ -125,7 +126,7 @@ try {
             if ($checkStmt->rowCount() === 0) {
                 sendJsonResponse([
                     "success" => false,
-                    "message" => "Patient not found"
+                    "message" => "Pasien tidak ditemukan"
                 ], 404);
             }
             
@@ -133,18 +134,22 @@ try {
             $updateFields = [];
             $params = [':id' => $id];
             
-            $allowedFields = ['medical_record_number', 'full_name', 'gender', 'birth_date', 'phone', 'email', 'address', 'blood_type', 'allergies', 'emergency_contact'];
+            $allowedFields = [
+                'medical_record_number', 'full_name', 'gender', 'birth_date', 
+                'phone', 'email', 'address', 'blood_type', 'allergies', 'emergency_contact'
+            ];
+            
             foreach ($allowedFields as $field) {
-                if (isset($data[$field])) {
+                if (isset($input[$field])) {
                     $updateFields[] = "$field = :$field";
-                    $params[":$field"] = $data[$field];
+                    $params[":$field"] = $input[$field];
                 }
             }
             
             if (empty($updateFields)) {
                 sendJsonResponse([
                     "success" => false,
-                    "message" => "No fields to update"
+                    "message" => "Tidak ada data yang diupdate"
                 ], 400);
             }
             
@@ -158,22 +163,20 @@ try {
             if ($updateStmt->execute()) {
                 sendJsonResponse([
                     "success" => true,
-                    "message" => "Patient updated successfully"
+                    "message" => "Data pasien berhasil diupdate"
                 ]);
             } else {
-                sendJsonResponse([
-                    "success" => false,
-                    "message" => "Failed to update patient"
-                ], 500);
+                $errorInfo = $updateStmt->errorInfo();
+                throw new Exception("Gagal mengupdate pasien: " . $errorInfo[2]);
             }
             break;
             
         case 'DELETE':
-            $id = $_GET['id'] ?? null;
+            $id = $_GET['id'] ?? $input['id'] ?? null;
             if (!$id) {
                 sendJsonResponse([
                     "success" => false,
-                    "message" => "Patient ID is required"
+                    "message" => "ID pasien diperlukan"
                 ], 400);
             }
             
@@ -187,7 +190,7 @@ try {
             if ($result['appointment_count'] > 0) {
                 sendJsonResponse([
                     "success" => false,
-                    "message" => "Cannot delete patient with existing appointments"
+                    "message" => "Tidak dapat menghapus pasien yang memiliki janji temu"
                 ], 400);
             }
             
@@ -198,20 +201,18 @@ try {
             if ($deleteStmt->execute()) {
                 sendJsonResponse([
                     "success" => true,
-                    "message" => "Patient deleted successfully"
+                    "message" => "Pasien berhasil dihapus"
                 ]);
             } else {
-                sendJsonResponse([
-                    "success" => false,
-                    "message" => "Failed to delete patient"
-                ], 500);
+                $errorInfo = $deleteStmt->errorInfo();
+                throw new Exception("Gagal menghapus pasien: " . $errorInfo[2]);
             }
             break;
             
         default:
             sendJsonResponse([
                 "success" => false,
-                "message" => "Method not allowed"
+                "message" => "Method tidak diizinkan"
             ], 405);
     }
     
@@ -219,7 +220,7 @@ try {
     error_log("Error in patients.php: " . $e->getMessage());
     sendJsonResponse([
         "success" => false,
-        "message" => "Internal server error: " . $e->getMessage()
+        "message" => "Error: " . $e->getMessage()
     ], 500);
 }
-?>
+?>  

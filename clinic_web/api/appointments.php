@@ -1,5 +1,5 @@
 <?php
-include_once '../config/database.php';
+include_once __DIR__ . '/../config/database.php';
 handleCors();
 
 $database = new Database();
@@ -69,7 +69,6 @@ try {
         case 'POST':
             $data = getRequestData();
             
-            // Validate required fields
             $required = ['patient_id', 'doctor_id', 'room_id', 'scheduled_at'];
             foreach ($required as $field) {
                 if (empty($data[$field])) {
@@ -80,7 +79,6 @@ try {
                 }
             }
             
-            // Check for scheduling conflicts
             $conflictQuery = "SELECT COUNT(*) as conflict_count 
                             FROM appointments 
                             WHERE doctor_id = :doctor_id 
@@ -106,7 +104,6 @@ try {
             
             $stmt = $db->prepare($query);
             
-            // Bind parameters dengan nilai default
             $patient_id = !empty($data['patient_id']) ? $data['patient_id'] : null;
             $doctor_id = !empty($data['doctor_id']) ? $data['doctor_id'] : null;
             $room_id = !empty($data['room_id']) ? $data['room_id'] : null;
@@ -145,7 +142,6 @@ try {
             break;
             
         case 'PUT':
-            // Get ID from query string or from JSON data
             $input = getRequestData();
             $id = $_GET['id'] ?? $input['id'] ?? null;
             
@@ -158,7 +154,6 @@ try {
             
             $data = $input;
             
-            // Check if appointment exists
             $checkQuery = "SELECT id FROM appointments WHERE id = :id";
             $checkStmt = $db->prepare($checkQuery);
             $checkStmt->bindParam(':id', $id);
@@ -171,7 +166,6 @@ try {
                 ], 404);
             }
             
-            // Build update query dynamically based on provided fields
             $updateFields = [];
             $params = [':id' => $id];
             
@@ -212,7 +206,6 @@ try {
             break;
             
         case 'DELETE':
-            // Get ID from query string or from JSON data
             $input = getRequestData();
             $id = $_GET['id'] ?? $input['id'] ?? null;
             
@@ -223,7 +216,6 @@ try {
                 ], 400);
             }
             
-            // Check if appointment exists
             $checkQuery = "SELECT id, status FROM appointments WHERE id = :id";
             $checkStmt = $db->prepare($checkQuery);
             $checkStmt->bindParam(':id', $id);
@@ -238,7 +230,6 @@ try {
             
             $appointment = $checkStmt->fetch(PDO::FETCH_ASSOC);
             
-            // Don't allow deletion of completed appointments
             if ($appointment['status'] === 'completed') {
                 sendJsonResponse([
                     "success" => false,

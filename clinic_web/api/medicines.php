@@ -1,5 +1,6 @@
+
 <?php
-include_once '../config/database.php';
+include_once __DIR__ . '/../config/database.php';
 handleCors();
 
 $database = new Database();
@@ -19,7 +20,10 @@ try {
         case 'GET':
             $query = "SELECT * FROM medicines WHERE is_active = 1 ORDER BY name";
             $stmt = $db->prepare($query);
-            $stmt->execute();
+            
+            if (!$stmt->execute()) {
+                throw new Exception("Failed to execute query: " . implode(", ", $stmt->errorInfo()));
+            }
             
             $medicines = [];
             while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
@@ -47,7 +51,10 @@ try {
         case 'POST':
             $data = getRequestData();
             
-            // Validate required fields
+            // Debug log
+            error_log("Medicine POST data: " . json_encode($data));
+            
+            // Validasi input
             $required = ['code', 'name', 'unit', 'price'];
             foreach ($required as $field) {
                 if (empty($data[$field])) {
@@ -58,6 +65,19 @@ try {
                 }
             }
             
+            // Check for duplicate code
+            $checkQuery = "SELECT id FROM medicines WHERE code = :code AND is_active = 1";
+            $checkStmt = $db->prepare($checkQuery);
+            $checkStmt->bindParam(':code', $data['code']);
+            $checkStmt->execute();
+            
+            if ($checkStmt->rowCount() > 0) {
+                sendJsonResponse([
+                    "success" => false,
+                    "message" => "Medicine code already exists"
+                ], 400);
+            }
+            
             $query = "INSERT INTO medicines 
                      (code, name, generic_name, category, unit, price, stock, min_stock, supplier, expiry_date, description) 
                      VALUES 
@@ -65,29 +85,42 @@ try {
             
             $stmt = $db->prepare($query);
             
-            $stmt->bindParam(':code', $data['code']);
-            $stmt->bindParam(':name', $data['name']);
-            $stmt->bindParam(':generic_name', $data['generic_name'] ?? '');
-            $stmt->bindParam(':category', $data['category'] ?? '');
-            $stmt->bindParam(':unit', $data['unit']);
-            $stmt->bindParam(':price', $data['price']);
-            $stmt->bindParam(':stock', $data['stock'] ?? 0);
-            $stmt->bindParam(':min_stock', $data['min_stock'] ?? 0);
-            $stmt->bindParam(':supplier', $data['supplier'] ?? '');
-            $stmt->bindParam(':expiry_date', $data['expiry_date'] ?? null);
-            $stmt->bindParam(':description', $data['description'] ?? '');
+            // Bind parameters dengan tipe data yang tepat - PERBAIKAN DI SINI
+            $code = trim($data['code']);
+            $name = trim($data['name']);
+            $generic_name = isset($data['generic_name']) ? trim($data['generic_name']) : '';
+            $category = isset($data['category']) ? trim($data['category']) : '';
+            $unit = trim($data['unit']);
+            $price = (float)$data['price'];
+            $stock = isset($data['stock']) ? (int)$data['stock'] : 0;
+            $min_stock = isset($data['min_stock']) ? (int)$data['min_stock'] : 0;
+            $supplier = isset($data['supplier']) ? trim($data['supplier']) : '';
+            $expiry_date = !empty($data['expiry_date']) ? $data['expiry_date'] : null;
+            $description = isset($data['description']) ? trim($data['description']) : '';
+            
+            // Bind parameter dengan value langsung, bukan reference ke expression
+            $stmt->bindValue(':code', $code);
+            $stmt->bindValue(':name', $name);
+            $stmt->bindValue(':generic_name', $generic_name);
+            $stmt->bindValue(':category', $category);
+            $stmt->bindValue(':unit', $unit);
+            $stmt->bindValue(':price', $price);
+            $stmt->bindValue(':stock', $stock);
+            $stmt->bindValue(':min_stock', $min_stock);
+            $stmt->bindValue(':supplier', $supplier);
+            $stmt->bindValue(':expiry_date', $expiry_date);
+            $stmt->bindValue(':description', $description);
             
             if ($stmt->execute()) {
+                $medicine_id = $db->lastInsertId();
                 sendJsonResponse([
                     "success" => true,
                     "message" => "Medicine created successfully",
-                    "medicine_id" => $db->lastInsertId()
+                    "medicine_id" => $medicine_id
                 ], 201);
             } else {
-                sendJsonResponse([
-                    "success" => false,
-                    "message" => "Failed to create medicine"
-                ], 500);
+                $errorInfo = $stmt->errorInfo();
+                throw new Exception("Failed to create medicine: " . $errorInfo[2]);
             }
             break;
             
@@ -103,7 +136,7 @@ try {
             $data = getRequestData();
             
             // Check if medicine exists
-            $checkQuery = "SELECT id FROM medicines WHERE id = :id";
+            $checkQuery = "SELECT id FROM medicines WHERE id = :id AND is_active = 1";
             $checkStmt = $db->prepare($checkQuery);
             $checkStmt->bindParam(':id', $id);
             $checkStmt->execute();
@@ -115,15 +148,21 @@ try {
                 ], 404);
             }
             
-            // Build update query
             $updateFields = [];
             $params = [':id' => $id];
             
-            $allowedFields = ['code', 'name', 'generic_name', 'category', 'unit', 'price', 'stock', 'min_stock', 'supplier', 'expiry_date', 'description', 'is_active'];
+            $allowedFields = ['code', 'name', 'generic_name', 'category', 'unit', 'price', 'stock', 'min_stock', 'supplier', 'expiry_date', 'description'];
             foreach ($allowedFields as $field) {
                 if (isset($data[$field])) {
                     $updateFields[] = "$field = :$field";
-                    $params[":$field"] = $data[$field];
+                    // Handle different data types
+                    if (in_array($field, ['price'])) {
+                        $params[":$field"] = (float)$data[$field];
+                    } elseif (in_array($field, ['stock', 'min_stock'])) {
+                        $params[":$field"] = (int)$data[$field];
+                    } else {
+                        $params[":$field"] = trim($data[$field]);
+                    }
                 }
             }
             
@@ -134,9 +173,26 @@ try {
                 ], 400);
             }
             
+            // Check for duplicate code if code is being updated
+            if (isset($data['code'])) {
+                $checkCodeQuery = "SELECT id FROM medicines WHERE code = :code AND id != :id AND is_active = 1";
+                $checkCodeStmt = $db->prepare($checkCodeQuery);
+                $checkCodeStmt->bindValue(':code', trim($data['code']));
+                $checkCodeStmt->bindValue(':id', $id);
+                $checkCodeStmt->execute();
+                
+                if ($checkCodeStmt->rowCount() > 0) {
+                    sendJsonResponse([
+                        "success" => false,
+                        "message" => "Medicine code already exists"
+                    ], 400);
+                }
+            }
+            
             $updateQuery = "UPDATE medicines SET " . implode(', ', $updateFields) . " WHERE id = :id";
             $updateStmt = $db->prepare($updateQuery);
             
+            // Gunakan bindValue untuk semua parameter
             foreach ($params as $key => $value) {
                 $updateStmt->bindValue($key, $value);
             }
@@ -147,10 +203,8 @@ try {
                     "message" => "Medicine updated successfully"
                 ]);
             } else {
-                sendJsonResponse([
-                    "success" => false,
-                    "message" => "Failed to update medicine"
-                ], 500);
+                $errorInfo = $updateStmt->errorInfo();
+                throw new Exception("Failed to update medicine: " . $errorInfo[2]);
             }
             break;
             
@@ -166,7 +220,7 @@ try {
             // Soft delete - set is_active to 0
             $query = "UPDATE medicines SET is_active = 0 WHERE id = :id";
             $stmt = $db->prepare($query);
-            $stmt->bindParam(':id', $id);
+            $stmt->bindValue(':id', $id);
             
             if ($stmt->execute()) {
                 sendJsonResponse([
@@ -174,10 +228,8 @@ try {
                     "message" => "Medicine deleted successfully"
                 ]);
             } else {
-                sendJsonResponse([
-                    "success" => false,
-                    "message" => "Failed to delete medicine"
-                ], 500);
+                $errorInfo = $stmt->errorInfo();
+                throw new Exception("Failed to delete medicine: " . $errorInfo[2]);
             }
             break;
             
@@ -192,7 +244,7 @@ try {
     error_log("Error in medicines.php: " . $e->getMessage());
     sendJsonResponse([
         "success" => false,
-        "message" => "Internal server error: " . $e->getMessage()
+        "message" => "Error: " . $e->getMessage()
     ], 500);
 }
 ?>
